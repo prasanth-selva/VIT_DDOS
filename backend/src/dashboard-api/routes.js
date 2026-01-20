@@ -1,5 +1,7 @@
 const express = require('express');
 const { getMitigationMetrics } = require('../metrics/state');
+const config = require('../../config/default');
+const { sendTelegramAlert, formatAttackAlert } = require('../alerts/telegram');
 const { registerTarget, listTargets } = require('../gateway/registry');
 
 const router = express.Router();
@@ -82,6 +84,38 @@ router.post('/api/register-target', (req, res) => {
 
 router.get('/api/targets', (req, res) => {
   res.json({ targets: listTargets() });
+});
+
+router.post('/api/alerts/telegram', async (req, res) => {
+  try {
+    if (!config.telegram?.enabled || !config.telegram.botToken || !config.telegram.chatId) {
+      return res.status(400).json({ error: 'Telegram alerting not configured.' });
+    }
+
+    const payload = req.body || {};
+    const message = payload.message || formatAttackAlert({
+      targetId: payload.targetId || 'manual',
+      action: payload.action || 'INFO',
+      trafficClass: payload.trafficClass || 'unknown',
+      anomalyScore: Number(payload.anomalyScore || 0),
+      rps: Number(payload.rps || 0),
+      reason: payload.reason || 'Manual alert trigger.'
+    });
+
+    const result = await sendTelegramAlert({
+      token: config.telegram.botToken,
+      chatId: config.telegram.chatId,
+      text: message
+    });
+
+    if (!result.ok) {
+      return res.status(502).json({ error: 'Telegram send failed.', status: result.status, body: result.body });
+    }
+
+    return res.json({ status: 'sent' });
+  } catch (error) {
+    return res.status(500).json({ error: error.message || 'Failed to send Telegram alert.' });
+  }
 });
 
 module.exports = router;

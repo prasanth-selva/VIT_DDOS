@@ -9,5 +9,11 @@ module.exports = {
   softThrottleMs: Number(process.env.SOFT_THROTTLE_MS || 200),
   hardLimitRps: Number(process.env.HARD_LIMIT_RPS || 30),
   windowSeconds: Number(process.env.WINDOW_SECONDS || 60),
-  staticDir: path.join(__dirname, '..', '..', 'frontend', 'public')
+  staticDir: path.join(__dirname, '..', '..', 'frontend', 'public'),
+  telegram: {
+    enabled: process.env.TELEGRAM_ENABLED !== 'false',
+    botToken: process.env.TELEGRAM_BOT_TOKEN,
+    chatId: process.env.TELEGRAM_CHAT_ID,
+    cooldownMs: Number(process.env.TELEGRAM_ALERT_COOLDOWN_MS || 60000)
+  }
 };

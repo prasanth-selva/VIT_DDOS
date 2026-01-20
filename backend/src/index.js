@@ -33,9 +33,48 @@ const {
 const { getAnomalyMetrics } = require('./metrics/state');
 const { updateAttackMode, getAttackMode } = require('./security/attackMode');
 const { createSecureToken, verifySecureToken } = require('./security/secureGateway');
+const { sendTelegramAlert, formatAttackAlert } = require('./alerts/telegram');
 
 const app = createApp({ staticDir: config.staticDir, dashboardStatic: config.dashboardStatic });
 const proxy = buildProxy((req) => req._targetUrl, '/gateway');
+
+let lastAttackState = false;
+let lastTelegramSentAt = 0;
+
+async function maybeSendAttackAlert({ attackActive, targetId, decision, classification, anomalyScore, rps, reason }) {
+  if (!config.telegram?.enabled || !config.telegram.botToken || !config.telegram.chatId) {
+    return;
+  }
+  const now = Date.now();
+  const shouldSend = attackActive && (!lastAttackState || now - lastTelegramSentAt > config.telegram.cooldownMs);
+  if (!shouldSend) {
+    lastAttackState = attackActive;
+    return;
+  }
+
+  const message = formatAttackAlert({
+    targetId,
+    action: decision?.action || 'UNKNOWN',
+    trafficClass: classification?.trafficClass || 'unknown',
+    anomalyScore: Number(anomalyScore || 0),
+    rps: Number(rps || 0),
+    reason: reason || 'Attack mode active.'
+  });
+
+  try {
+    await sendTelegramAlert({
+      token: config.telegram.botToken,
+      chatId: config.telegram.chatId,
+      text: message
+    });
+    lastTelegramSentAt = now;
+  } catch (error) {
+    // eslint-disable-next-line no-console
+    console.warn('Telegram alert failed', error.message || error);
+  } finally {
+    lastAttackState = attackActive;
+  }
+}
 
 app.use((req, res, next) => {
   if (
@@ -251,6 +290,16 @@ app.use((req, res, next) => {
       topFeatures: anomaly.contributors,
       trustScore,
       riskScore: decision.riskScore
+    });
+
+    maybeSendAttackAlert({
+      attackActive: globalAttackMode,
+      targetId,
+      decision,
+      classification,
+      anomalyScore: anomaly.score,
+      rps: currentRps,
+      reason: decisionPayload.reason
     });
   } catch (error) {
     return res.status(403).json({
