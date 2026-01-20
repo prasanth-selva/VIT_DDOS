@@ -1,8 +1,6 @@
 const express = require('express');
 const config = require('../../config/default');
 const { getMitigationMetrics } = require('../metrics/state');
-const config = require('../../config/default');
-const { sendTelegramAlert, formatAttackAlert } = require('../alerts/telegram');
 const { registerTarget, listTargets } = require('../gateway/registry');
 const { sendTelegramAlert, formatAttackAlert } = require('../alerts/telegram');
 
