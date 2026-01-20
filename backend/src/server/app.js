@@ -8,11 +8,18 @@ const dashboardRoutes = require('../dashboard-api/routes');
 function createApp({ staticDir, dashboardStatic }) {
   const app = express();
 
+  app.disable('x-powered-by');
+  app.set('trust proxy', 1);
+
   app.use(helmet({
     contentSecurityPolicy: false
   }));
   app.use(express.urlencoded({ extended: false }));
-  app.use(cors());
+  const allowedOrigin = process.env.CORS_ORIGIN;
+  app.use(cors({
+    origin: allowedOrigin || true,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']
+  }));
   app.use(morgan('combined'));
   app.use(express.json());
 

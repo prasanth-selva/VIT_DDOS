@@ -1,0 +1,4 @@
+node_modules/
+.env
+VIT_DDOS/
+.DS_Store

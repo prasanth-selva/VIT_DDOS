@@ -1,4 +1,5 @@
-require('dotenv').config();
+const path = require('path');
+require('dotenv').config({ path: path.join(__dirname, '..', '..', '.env') });
 const http = require('http');
 const WebSocket = require('ws');
 const config = require('../config/default');
@@ -38,43 +39,8 @@ const { sendTelegramAlert, formatAttackAlert } = require('./alerts/telegram');
 const app = createApp({ staticDir: config.staticDir, dashboardStatic: config.dashboardStatic });
 const proxy = buildProxy((req) => req._targetUrl, '/gateway');
 
-let lastAttackState = false;
-let lastTelegramSentAt = 0;
-
-async function maybeSendAttackAlert({ attackActive, targetId, decision, classification, anomalyScore, rps, reason }) {
-  if (!config.telegram?.enabled || !config.telegram.botToken || !config.telegram.chatId) {
-    return;
-  }
-  const now = Date.now();
-  const shouldSend = attackActive && (!lastAttackState || now - lastTelegramSentAt > config.telegram.cooldownMs);
-  if (!shouldSend) {
-    lastAttackState = attackActive;
-    return;
-  }
-
-  const message = formatAttackAlert({
-    targetId,
-    action: decision?.action || 'UNKNOWN',
-    trafficClass: classification?.trafficClass || 'unknown',
-    anomalyScore: Number(anomalyScore || 0),
-    rps: Number(rps || 0),
-    reason: reason || 'Attack mode active.'
-  });
-
-  try {
-    await sendTelegramAlert({
-      token: config.telegram.botToken,
-      chatId: config.telegram.chatId,
-      text: message
-    });
-    lastTelegramSentAt = now;
-  } catch (error) {
-    // eslint-disable-next-line no-console
-    console.warn('Telegram alert failed', error.message || error);
-  } finally {
-    lastAttackState = attackActive;
-  }
-}
+let lastTelegramAlertAt = 0;
+let lastAttackModeState = false;
 
 app.use((req, res, next) => {
   if (
@@ -234,6 +200,38 @@ app.use((req, res, next) => {
       trafficClass: classification.trafficClass,
       blocked: false
     }) || attackByScore || attackByRps || attackByClass;
+
+    if (
+      config.telegram?.enabled &&
+      config.telegram.botToken &&
+      config.telegram.chatId
+    ) {
+      const now = Date.now();
+      const cooldownOk = now - lastTelegramAlertAt >= config.telegram.cooldownMs;
+      const activated = globalAttackMode && (!lastAttackModeState || cooldownOk);
+
+      if (activated) {
+        lastTelegramAlertAt = now;
+        const text = formatAttackAlert({
+          targetId,
+          action: 'AUTO',
+          trafficClass: classification.trafficClass,
+          anomalyScore: maxAnomaly,
+          rps: currentRps,
+          reason: classification.reason
+        });
+        sendTelegramAlert({
+          token: config.telegram.botToken,
+          chatId: config.telegram.chatId,
+          text
+        }).catch((error) => {
+          // eslint-disable-next-line no-console
+          console.error('Telegram alert failed:', error.message);
+        });
+      }
+    }
+
+    lastAttackModeState = globalAttackMode;
     const challengeFailures = getFailureCount(signature);
 
     decision = buildDecision({
@@ -292,15 +290,6 @@ app.use((req, res, next) => {
       riskScore: decision.riskScore
     });
 
-    maybeSendAttackAlert({
-      attackActive: globalAttackMode,
-      targetId,
-      decision,
-      classification,
-      anomalyScore: anomaly.score,
-      rps: currentRps,
-      reason: decisionPayload.reason
-    });
   } catch (error) {
     return res.status(403).json({
       status: 'blocked',

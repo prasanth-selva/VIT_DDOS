@@ -1,8 +1,10 @@
 const express = require('express');
+const config = require('../../config/default');
 const { getMitigationMetrics } = require('../metrics/state');
 const config = require('../../config/default');
 const { sendTelegramAlert, formatAttackAlert } = require('../alerts/telegram');
 const { registerTarget, listTargets } = require('../gateway/registry');
+const { sendTelegramAlert, formatAttackAlert } = require('../alerts/telegram');
 
 const router = express.Router();
 router.use(express.json({ limit: '256kb' }));
@@ -79,6 +81,53 @@ router.post('/api/register-target', (req, res) => {
     });
   } catch (error) {
     res.status(400).json({ error: error.message });
+  }
+});
+
+router.post('/api/alerts/telegram', async (req, res) => {
+  try {
+    if (!config.telegram?.enabled || !config.telegram.botToken || !config.telegram.chatId) {
+      return res.status(400).json({ error: 'Telegram is not configured.' });
+    }
+
+    const { message, targetId, action, trafficClass, anomalyScore, rps, reason } = req.body || {};
+    const text = message?.trim() || formatAttackAlert({
+      targetId,
+      action: action || 'MANUAL',
+      trafficClass: trafficClass || 'manual',
+      anomalyScore: Number.isFinite(anomalyScore) ? anomalyScore : 0,
+      rps: Number.isFinite(rps) ? rps : 0,
+      reason: reason || 'Manual alert from dashboard'
+    });
+
+    const result = await sendTelegramAlert({
+      token: config.telegram.botToken,
+      chatId: config.telegram.chatId,
+      text
+    });
+
+    if (!result.ok) {
+      let details;
+      try {
+        const parsed = JSON.parse(result.body || '{}');
+        details = parsed.description || parsed.message;
+      } catch (parseError) {
+        details = result.body;
+      }
+
+      let hint;
+      if (result.status === 401 || result.status === 404) {
+        hint = 'Check TELEGRAM_BOT_TOKEN (should look like 123456:ABC... and must NOT include the "bot" prefix).';
+      } else if (result.status === 400 && typeof details === 'string' && details.toLowerCase().includes('chat not found')) {
+        hint = 'Check TELEGRAM_CHAT_ID. For users, send /start to the bot first; for groups/channels, add the bot and use the correct chat id.';
+      }
+
+      return res.status(502).json({ error: 'Telegram alert failed.', status: result.status, details, hint });
+    }
+
+    return res.json({ status: 'sent' });
+  } catch (error) {
+    return res.status(500).json({ error: error.message || 'Telegram alert failed.' });
   }
 });
 
